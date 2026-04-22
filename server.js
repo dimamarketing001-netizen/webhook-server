@@ -1,6 +1,6 @@
 import express from 'express';
 import dotenv from 'dotenv';
-import { handleDealUpdate } from './handlers/bitrix.js';
+import { handleDealUpdate, validateToken } from './handlers/bitrix.js';
 dotenv.config();
 
 const app = express();
@@ -29,9 +29,16 @@ app.get('/webhook/', (req, res) => {
   });
 });
 
-// Вебхук от Битрикс24 ← исправили путь
+// Вебхук от Битрикс24
 app.post('/webhook/bitrix', async (req, res) => {
   console.log('\n[WEBHOOK] ← Получен запрос от Битрикс24');
+
+  // Проверяем токен
+  const auth = req.body?.auth;
+  if (!validateToken(auth)) {
+    console.log('[WEBHOOK] ❌ Отклонён — неверный токен');
+    return res.status(403).json({ error: 'Forbidden' });
+  }
 
   // Сразу отвечаем Б24
   res.json({ status: 'ok' });
@@ -71,5 +78,7 @@ app.use((req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n${'='.repeat(50)}`);
   console.log(`🚀 Webhook сервер запущен на порту ${PORT}`);
+  console.log(`🔑 Поле договора: ${process.env.DEAL_CONTRACT_FIELD}`);
+  console.log(`🛡️  Проверка токена: ${process.env.BITRIX_APP_TOKEN ? 'включена' : 'отключена'}`);
   console.log(`${'='.repeat(50)}\n`);
 });
