@@ -19,8 +19,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// Проверка работы сервера
-app.get('/', (req, res) => {
+// Проверка работы
+app.get('/webhook/', (req, res) => {
   res.json({
     status: 'ok',
     server: 'webhook-server',
@@ -29,11 +29,11 @@ app.get('/', (req, res) => {
   });
 });
 
-// Вебхук от Битрикс24
-app.post('/bitrix', async (req, res) => {
+// Вебхук от Битрикс24 ← исправили путь
+app.post('/webhook/bitrix', async (req, res) => {
   console.log('\n[WEBHOOK] ← Получен запрос от Битрикс24');
 
-  // Сразу отвечаем Б24 — он не должен ждать
+  // Сразу отвечаем Б24
   res.json({ status: 'ok' });
 
   try {
@@ -43,45 +43,33 @@ app.post('/bitrix', async (req, res) => {
     console.log(`[WEBHOOK] Событие: "${event}"`);
 
     if (!event) {
-      console.log('[WEBHOOK] ❌ Нет поля event в запросе');
+      console.log('[WEBHOOK] ❌ Нет поля event');
       return;
     }
 
-    // Роутинг событий
     switch (event) {
       case 'ONCRMDEALUPDATE':
         console.log('[WEBHOOK] → handleDealUpdate');
         await handleDealUpdate(body.data);
         break;
 
-      // Сюда добавляем новые события
-      // case 'ONCRMCONTACTUPDATE':
-      //   await handleContactUpdate(body.data);
-      //   break;
-
       default:
         console.log(`[WEBHOOK] ℹ️ Событие "${event}" не обрабатывается`);
     }
   } catch (error) {
-    console.error('[WEBHOOK] ❌ Ошибка обработки:');
-    console.error('  message:', error.message);
-    console.error('  stack:', error.stack);
+    console.error('[WEBHOOK] ❌ Ошибка:', error.message);
+    console.error('[WEBHOOK] Stack:', error.stack);
   }
 });
 
 // 404
 app.use((req, res) => {
   console.log(`[SERVER] 404: ${req.method} ${req.url}`);
-  res.status(404).json({ error: 'Not found' });
+  res.status(404).json({ error: 'Not found', path: req.url });
 });
 
-// Запуск
-app.listen(PORT, '127.0.0.1', () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n${'='.repeat(50)}`);
-  console.log(`🚀 Webhook сервер запущен`);
-  console.log(`📡 Локальный: http://127.0.0.1:${PORT}`);
-  console.log(`🌐 Внешний URL для Б24:`);
-  console.log(`   https://домен/webhook/bitrix`);
-  console.log(`🔑 Поле договора: ${process.env.DEAL_CONTRACT_FIELD}`);
+  console.log(`🚀 Webhook сервер запущен на порту ${PORT}`);
   console.log(`${'='.repeat(50)}\n`);
 });
