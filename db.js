@@ -110,21 +110,29 @@ export async function createInvoiceNotification({
   amount,
   currency,
   notificationType,
+  dealTypeId,  // ← добавили
 }) {
   try {
     console.log(`[DB] Создание invoice уведомления:`, {
       invoiceId, dealId, contactId, leadId,
-      invoiceStatus, amount, currency, notificationType,
+      invoiceStatus, amount, currency, notificationType, dealTypeId,
     });
 
     const [result] = await pool.execute(
       `INSERT INTO invoice_notifications
-        (invoice_id, deal_id, contact_id, lead_id, invoice_status, 
-         amount, currency, notification_type, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+        (invoice_id, deal_id, deal_type_id, contact_id, lead_id, 
+         invoice_status, amount, currency, notification_type, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
       [
-        invoiceId, dealId || null, contactId || null, leadId || null,
-        invoiceStatus, amount || null, currency || null, notificationType,
+        invoiceId,
+        dealId || null,
+        dealTypeId || null,  // ← добавили
+        contactId || null,
+        leadId || null,
+        invoiceStatus,
+        amount || null,
+        currency || null,
+        notificationType,
       ]
     );
 
