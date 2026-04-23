@@ -48,14 +48,25 @@ export async function notificationExists(dealId, type) {
   }
 }
 
-export async function createNotification({ dealId, type, contactId, leadId, dealTitle }) {
+export async function createNotification({
+  dealId, type, contactId, leadId, dealTitle, dealTypeId
+}) {
   try {
-    console.log(`[DB] Создание уведомления:`, { dealId, type, contactId, leadId, dealTitle });
+    console.log(`[DB] Создание уведомления:`, {
+      dealId, type, contactId, leadId, dealTitle, dealTypeId
+    });
     const [result] = await pool.execute(
       `INSERT INTO notifications 
-        (deal_id, type, status, contact_id, lead_id, deal_title)
-       VALUES (?, ?, 'pending', ?, ?, ?)`,
-      [dealId || null, type, contactId || null, leadId || null, dealTitle || null]
+        (deal_id, type, status, contact_id, lead_id, deal_title, deal_type_id)
+       VALUES (?, ?, 'pending', ?, ?, ?, ?)`,
+      [
+        dealId || null,
+        type,
+        contactId || null,
+        leadId || null,
+        dealTitle || null,
+        dealTypeId || null,  // ← добавили
+      ]
     );
     console.log(`✅ [DB] Уведомление создано: id=${result.insertId}`);
     return result;

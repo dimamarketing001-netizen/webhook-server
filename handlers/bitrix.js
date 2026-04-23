@@ -17,6 +17,9 @@ const APP_TOKEN = process.env.BITRIX_APP_TOKEN;
 const CONTRACT_CATEGORIES = (process.env.CONTRACT_CATEGORY_IDS || '0').split(',').map(s => s.trim());
 const INVOICE_CATEGORIES = (process.env.INVOICE_CATEGORY_IDS || '0,18,16').split(',').map(s => s.trim());
 
+const DEAL_WON_STAGE = 'WON';
+const DEAL_WON_CATEGORY = '0';
+
 // Статусы счетов которые нас интересуют
 const INVOICE_STATUSES = {
   'DT31_2:N': 'invoice_unconfirmed',
@@ -53,7 +56,6 @@ export async function handleDealUpdate(data) {
 
   console.log(`[HANDLER] Deal ID: ${dealId}`);
 
-  // Получаем сделку
   const deal = await getDeal(dealId);
   if (!deal) {
     console.log(`[HANDLER] ❌ Сделка ${dealId} не найдена`);
@@ -63,12 +65,15 @@ export async function handleDealUpdate(data) {
   const categoryId = deal.CATEGORY_ID;
   console.log(`[HANDLER] Category_id: ${categoryId}`);
 
-  // ── Проверяем договор (только Category_id=0) ──────────────────────────────
+  // Проверяем WON (только Category_id=0)
+  await checkDealWon(deal);
+
+  // Проверяем договор (только Category_id=0)
   if (CONTRACT_CATEGORIES.includes(categoryId)) {
     await checkContractField(deal);
   }
 
-  // ── Проверяем триггер счёта (Category_id=0,18,16) ─────────────────────────
+  // Проверяем триггер счёта (Category_id=0,16,18)
   if (INVOICE_CATEGORIES.includes(categoryId)) {
     await checkInvoiceTrigger(deal);
   }
@@ -113,9 +118,57 @@ async function checkContractField(deal) {
     contactId,
     leadId,
     dealTitle: deal.TITLE || `Сделка #${dealId}`,
+    dealTypeId: deal.TYPE_ID || null,  // ← добавили
   });
 
   console.log(`✅ [HANDLER] Договор → уведомление в очереди`);
+}
+
+// ─── Новая функция checkDealWon ───────────────────────────────────────────────
+async function checkDealWon(deal) {
+  const dealId = deal.ID;
+  const stageId = deal.STAGE_ID;
+  const categoryId = deal.CATEGORY_ID;
+
+  console.log(`\n[HANDLER] Проверка WON: STAGE_ID="${stageId}", CATEGORY_ID="${categoryId}"`);
+
+  // Только Category_id=0 и стадия WON
+  if (categoryId !== DEAL_WON_CATEGORY || stageId !== DEAL_WON_STAGE) {
+    console.log(`[HANDLER] ℹ️ Не подходит для уведомления WON`);
+    return;
+  }
+
+  console.log(`[HANDLER] ✅ Сделка выиграна! Начало производства`);
+
+  // Проверяем дубль — только одно уведомление на сделку
+  const existing = await notificationExists(dealId, 'deal_won');
+  if (existing?.status === 'sent') {
+    console.log(`[HANDLER] ℹ️ Уведомление WON уже отправлено`);
+    return;
+  }
+  if (existing?.status === 'pending') {
+    console.log(`[HANDLER] ℹ️ Уведомление WON уже в очереди`);
+    return;
+  }
+
+  const contactId = deal.CONTACT_ID ? parseInt(deal.CONTACT_ID) : null;
+  const leadId = deal.LEAD_ID ? parseInt(deal.LEAD_ID) : null;
+
+  if (!contactId && !leadId) {
+    console.log(`[HANDLER] ❌ Нет CONTACT_ID и LEAD_ID`);
+    return;
+  }
+
+  await createNotification({
+    dealId: parseInt(dealId),
+    type: 'deal_won',
+    contactId,
+    leadId,
+    dealTitle: deal.TITLE || `Сделка #${dealId}`,
+    dealTypeId: deal.TYPE_ID || null,
+  });
+
+  console.log(`✅ [HANDLER] WON → уведомление в очереди`);
 }
 
 // ─── СЧЕТА ────────────────────────────────────────────────────────────────────
