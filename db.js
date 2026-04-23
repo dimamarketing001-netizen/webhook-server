@@ -29,33 +29,16 @@ try {
   console.error('❌ [DB] Ошибка подключения:', err.message);
 }
 
-/**
- * Проверить существует ли уведомление
- * Для счетов ищем по invoice_id + type
- * Для договоров ищем по deal_id + type
- */
-export async function notificationExists(entityId, type) {
-  try {
-    // Для счётов
-    if (type === 'invoice_new' || type === 'invoice_confirmed') {
-      const [rows] = await pool.execute(
-        'SELECT id, status FROM notifications WHERE invoice_id = ? AND type = ?',
-        [entityId, type]
-      );
-      if (rows.length > 0) {
-        console.log(`[DB] Уведомление существует: invoice_id=${entityId}, type=${type}, status=${rows[0].status}`);
-        return rows[0];
-      }
-      return null;
-    }
+// ─── Уведомления по договорам ─────────────────────────────────────────────────
 
-    // Для договоров
+export async function notificationExists(dealId, type) {
+  try {
     const [rows] = await pool.execute(
       'SELECT id, status FROM notifications WHERE deal_id = ? AND type = ?',
-      [entityId, type]
+      [dealId, type]
     );
     if (rows.length > 0) {
-      console.log(`[DB] Уведомление существует: deal_id=${entityId}, type=${type}, status=${rows[0].status}`);
+      console.log(`[DB] Уведомление существует: deal_id=${dealId}, type=${type}, status=${rows[0].status}`);
       return rows[0];
     }
     return null;
@@ -65,42 +48,79 @@ export async function notificationExists(entityId, type) {
   }
 }
 
-/**
- * Создать уведомление
- */
-export async function createNotification({
-  dealId,
-  invoiceId = null,
-  invoiceStatus = null,
-  type,
-  contactId,
-  leadId,
-  dealTitle,
-}) {
+export async function createNotification({ dealId, type, contactId, leadId, dealTitle }) {
   try {
-    console.log(`[DB] Создание уведомления:`, {
-      dealId, invoiceId, invoiceStatus, type, contactId, leadId, dealTitle,
-    });
-
+    console.log(`[DB] Создание уведомления:`, { dealId, type, contactId, leadId, dealTitle });
     const [result] = await pool.execute(
       `INSERT INTO notifications 
-        (deal_id, invoice_id, invoice_status, type, status, contact_id, lead_id, deal_title)
-       VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`,
-      [
-        dealId || null,
-        invoiceId || null,
-        invoiceStatus || null,
-        type,
-        contactId || null,
-        leadId || null,
-        dealTitle || null,
-      ]
+        (deal_id, type, status, contact_id, lead_id, deal_title)
+       VALUES (?, ?, 'pending', ?, ?, ?)`,
+      [dealId || null, type, contactId || null, leadId || null, dealTitle || null]
     );
-
     console.log(`✅ [DB] Уведомление создано: id=${result.insertId}`);
     return result;
   } catch (err) {
     console.error('[DB] Ошибка createNotification:', err.message);
+    throw err;
+  }
+}
+
+// ─── Уведомления по счетам ────────────────────────────────────────────────────
+
+/**
+ * Проверить существует ли уведомление по счёту + статусу
+ */
+export async function invoiceNotificationExists(invoiceId, invoiceStatus) {
+  try {
+    const [rows] = await pool.execute(
+      'SELECT id, status FROM invoice_notifications WHERE invoice_id = ? AND invoice_status = ?',
+      [invoiceId, invoiceStatus]
+    );
+    if (rows.length > 0) {
+      console.log(`[DB] Invoice уведомление существует: invoice_id=${invoiceId}, invoice_status=${invoiceStatus}, status=${rows[0].status}`);
+      return rows[0];
+    }
+    return null;
+  } catch (err) {
+    console.error('[DB] Ошибка invoiceNotificationExists:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Создать уведомление по счёту
+ */
+export async function createInvoiceNotification({
+  invoiceId,
+  dealId,
+  contactId,
+  leadId,
+  invoiceStatus,
+  amount,
+  currency,
+  notificationType,
+}) {
+  try {
+    console.log(`[DB] Создание invoice уведомления:`, {
+      invoiceId, dealId, contactId, leadId,
+      invoiceStatus, amount, currency, notificationType,
+    });
+
+    const [result] = await pool.execute(
+      `INSERT INTO invoice_notifications
+        (invoice_id, deal_id, contact_id, lead_id, invoice_status, 
+         amount, currency, notification_type, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      [
+        invoiceId, dealId || null, contactId || null, leadId || null,
+        invoiceStatus, amount || null, currency || null, notificationType,
+      ]
+    );
+
+    console.log(`✅ [DB] Invoice уведомление создано: id=${result.insertId}`);
+    return result;
+  } catch (err) {
+    console.error('[DB] Ошибка createInvoiceNotification:', err.message);
     throw err;
   }
 }

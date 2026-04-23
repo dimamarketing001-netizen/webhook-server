@@ -1,15 +1,30 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
-import { notificationExists, createNotification } from '../db.js';
+import {
+  notificationExists,
+  createNotification,
+  invoiceNotificationExists,
+  createInvoiceNotification,
+} from '../db.js';
 dotenv.config();
 
 const BITRIX_WEBHOOK = process.env.BITRIX_WEBHOOK;
 const DEAL_CONTRACT_FIELD = process.env.DEAL_CONTRACT_FIELD;
+const DEAL_INVOICE_TRIGGER = process.env.DEAL_INVOICE_TRIGGER;
 const APP_TOKEN = process.env.BITRIX_APP_TOKEN;
-const ALLOWED_CATEGORY_ID = '0'; // Только сделки Category_id=0
+
+// Категории сделок
+const CONTRACT_CATEGORIES = (process.env.CONTRACT_CATEGORY_IDS || '0').split(',').map(s => s.trim());
+const INVOICE_CATEGORIES = (process.env.INVOICE_CATEGORY_IDS || '0,14,16').split(',').map(s => s.trim());
+
+// Статусы счетов которые нас интересуют
+const INVOICE_STATUSES = {
+  'DT31_2:N': 'invoice_unconfirmed',
+  'DT31_2:P': 'invoice_confirmed',
+};
 
 /**
- * Проверка токена Б24
+ * Проверка токена
  */
 export function validateToken(auth) {
   if (!APP_TOKEN) {
@@ -27,12 +42,8 @@ export function validateToken(auth) {
 
 // ─── СДЕЛКИ ───────────────────────────────────────────────────────────────────
 
-/**
- * Обработчик ONCRMDEALUPDATE — договор
- */
 export async function handleDealUpdate(data) {
   console.log('\n[HANDLER] === ONCRMDEALUPDATE ===');
-  console.log('[HANDLER] Данные:', JSON.stringify(data, null, 2));
 
   const dealId = data?.FIELDS?.ID;
   if (!dealId) {
@@ -40,42 +51,44 @@ export async function handleDealUpdate(data) {
     return;
   }
 
+  console.log(`[HANDLER] Deal ID: ${dealId}`);
+
+  // Получаем сделку
   const deal = await getDeal(dealId);
   if (!deal) {
     console.log(`[HANDLER] ❌ Сделка ${dealId} не найдена`);
     return;
   }
 
-  // Проверяем Category_id — только 0
-  if (deal.CATEGORY_ID !== ALLOWED_CATEGORY_ID) {
-    console.log(`[HANDLER] ℹ️ Сделка Category_id=${deal.CATEGORY_ID} — пропускаем (нужен 0)`);
-    return;
+  const categoryId = deal.CATEGORY_ID;
+  console.log(`[HANDLER] Category_id: ${categoryId}`);
+
+  // ── Проверяем договор (только Category_id=0) ──────────────────────────────
+  if (CONTRACT_CATEGORIES.includes(categoryId)) {
+    await checkContractField(deal);
   }
 
-  console.log(`[HANDLER] ✅ Category_id=0 — обрабатываем`);
-
-  // Проверяем поле договора
-  await checkContractField(deal);
+  // ── Проверяем триггер счёта (Category_id=0,14,16) ─────────────────────────
+  if (INVOICE_CATEGORIES.includes(categoryId)) {
+    await checkInvoiceTrigger(deal);
+  }
 }
 
-/**
- * Проверяем поле договора в сделке
- */
+// ─── ДОГОВОР ──────────────────────────────────────────────────────────────────
+
 async function checkContractField(deal) {
   const dealId = deal.ID;
   const fieldValue = deal[DEAL_CONTRACT_FIELD];
 
-  console.log(`\n[HANDLER] Проверка поля договора`);
-  console.log(`[HANDLER] Поле: ${DEAL_CONTRACT_FIELD} = "${fieldValue}"`);
+  console.log(`\n[HANDLER] Проверка договора: ${DEAL_CONTRACT_FIELD} = "${fieldValue}"`);
 
   if (fieldValue !== '1') {
-    console.log(`[HANDLER] ℹ️ Поле договора не активно, пропускаем`);
+    console.log(`[HANDLER] ℹ️ Поле договора не активно`);
     return;
   }
 
   console.log(`[HANDLER] ✅ Договор сформирован!`);
 
-  // Проверяем дубль
   const existing = await notificationExists(dealId, 'contract_ready');
   if (existing?.status === 'sent') {
     console.log(`[HANDLER] ℹ️ Уведомление уже отправлено`);
@@ -88,9 +101,6 @@ async function checkContractField(deal) {
 
   const contactId = deal.CONTACT_ID ? parseInt(deal.CONTACT_ID) : null;
   const leadId = deal.LEAD_ID ? parseInt(deal.LEAD_ID) : null;
-  const dealTitle = deal.TITLE || `Сделка #${dealId}`;
-
-  console.log(`[HANDLER] contact_id=${contactId}, lead_id=${leadId}`);
 
   if (!contactId && !leadId) {
     console.log(`[HANDLER] ❌ Нет CONTACT_ID и LEAD_ID`);
@@ -102,7 +112,7 @@ async function checkContractField(deal) {
     type: 'contract_ready',
     contactId,
     leadId,
-    dealTitle,
+    dealTitle: deal.TITLE || `Сделка #${dealId}`,
   });
 
   console.log(`✅ [HANDLER] Договор → уведомление в очереди`);
@@ -110,129 +120,115 @@ async function checkContractField(deal) {
 
 // ─── СЧЕТА ────────────────────────────────────────────────────────────────────
 
-/**
- * Обработчик ONCRMINVOICEADD — создание счёта
- */
-export async function handleInvoiceAdd(data) {
-  console.log('\n[HANDLER] === ONCRMINVOICEADD ===');
-  console.log('[HANDLER] Данные:', JSON.stringify(data, null, 2));
+async function checkInvoiceTrigger(deal) {
+  const dealId = deal.ID;
+  const triggerValue = deal[DEAL_INVOICE_TRIGGER];
 
-  const invoiceId = data?.FIELDS?.ID;
-  if (!invoiceId) {
-    console.log('[HANDLER] ❌ Нет ID счёта');
+  console.log(`\n[HANDLER] Проверка триггера счёта: ${DEAL_INVOICE_TRIGGER} = "${triggerValue}"`);
+
+  if (triggerValue !== '1') {
+    console.log(`[HANDLER] ℹ️ Триггер счёта не активен`);
     return;
   }
 
-  await processInvoice(invoiceId, 'add');
-}
-
-/**
- * Обработчик ONCRMINVOICEUPDATE — изменение счёта
- */
-export async function handleInvoiceUpdate(data) {
-  console.log('\n[HANDLER] === ONCRMINVOICEUPDATE ===');
-  console.log('[HANDLER] Данные:', JSON.stringify(data, null, 2));
-
-  const invoiceId = data?.FIELDS?.ID;
-  if (!invoiceId) {
-    console.log('[HANDLER] ❌ Нет ID счёта');
-    return;
-  }
-
-  await processInvoice(invoiceId, 'update');
-}
-
-/**
- * Общая логика обработки счёта
- */
-async function processInvoice(invoiceId, action) {
-  console.log(`\n[HANDLER] Обработка счёта ID=${invoiceId}, action=${action}`);
-
-  // Получаем данные счёта
-  const invoice = await getInvoice(invoiceId);
-  if (!invoice) {
-    console.log(`[HANDLER] ❌ Счёт ${invoiceId} не найден`);
-    return;
-  }
-
-  const status = invoice.STATUS_ID;
-  console.log(`[HANDLER] Статус счёта: "${status}"`);
-
-  // Определяем тип уведомления по статусу
-  let notificationType = null;
-
-  if (status === 'DT31_2:N' && action === 'add') {
-    // Новый неподтверждённый счёт
-    notificationType = 'invoice_new';
-    console.log(`[HANDLER] → Новый счёт (неподтверждённый)`);
-  } else if (status === 'DT31_2:P' && action === 'update') {
-    // Счёт подтверждён
-    notificationType = 'invoice_confirmed';
-    console.log(`[HANDLER] → Счёт подтверждён`);
-  } else {
-    console.log(`[HANDLER] ℹ️ Статус "${status}" + action="${action}" — пропускаем`);
-    return;
-  }
-
-  // Получаем DEAL_ID из счёта
-  const dealId = invoice.UF_DEAL_ID
-    ? parseInt(invoice.UF_DEAL_ID)
-    : null;
-
-  console.log(`[HANDLER] DEAL_ID счёта: ${dealId}`);
-
-  if (!dealId) {
-    console.log(`[HANDLER] ❌ У счёта нет привязки к сделке`);
-    return;
-  }
-
-  // Получаем сделку чтобы узнать контакт и проверить category
-  const deal = await getDeal(dealId);
-  if (!deal) {
-    console.log(`[HANDLER] ❌ Сделка ${dealId} не найдена`);
-    return;
-  }
-
-  // Проверяем Category_id — только 0
-  if (deal.CATEGORY_ID !== ALLOWED_CATEGORY_ID) {
-    console.log(`[HANDLER] ℹ️ Сделка Category_id=${deal.CATEGORY_ID} — пропускаем`);
-    return;
-  }
+  console.log(`[HANDLER] ✅ Триггер счёта активен — загружаем счета сделки`);
 
   const contactId = deal.CONTACT_ID ? parseInt(deal.CONTACT_ID) : null;
   const leadId = deal.LEAD_ID ? parseInt(deal.LEAD_ID) : null;
   const dealTitle = deal.TITLE || `Сделка #${dealId}`;
 
-  console.log(`[HANDLER] contact_id=${contactId}, lead_id=${leadId}`);
-
   if (!contactId && !leadId) {
-    console.log(`[HANDLER] ❌ Нет CONTACT_ID и LEAD_ID в сделке`);
+    console.log(`[HANDLER] ❌ Нет CONTACT_ID и LEAD_ID — некому отправлять`);
+    await resetInvoiceTrigger(dealId);
     return;
   }
 
-  // Проверяем дубль
-  const existing = await notificationExists(invoiceId, notificationType);
-  if (existing?.status === 'sent') {
-    console.log(`[HANDLER] ℹ️ Уведомление "${notificationType}" уже отправлено`);
+  // Получаем все счета сделки
+  const invoices = await getInvoicesByDeal(dealId);
+  console.log(`[HANDLER] Найдено счетов: ${invoices.length}`);
+
+  if (invoices.length === 0) {
+    console.log(`[HANDLER] ℹ️ Счета не найдены`);
+    await resetInvoiceTrigger(dealId);
     return;
   }
-  if (existing?.status === 'pending') {
-    console.log(`[HANDLER] ℹ️ Уведомление "${notificationType}" уже в очереди`);
+
+  // Обрабатываем каждый счёт
+  for (const invoice of invoices) {
+    await processInvoice(invoice, {
+      dealId: parseInt(dealId),
+      contactId,
+      leadId,
+      dealTitle,
+    });
+  }
+
+  // Сбрасываем триггер через API
+  await resetInvoiceTrigger(dealId);
+}
+
+/**
+ * Обработка одного счёта
+ */
+async function processInvoice(invoice, dealData) {
+  const invoiceId = parseInt(invoice.id);
+  const status = invoice.stageId || invoice.STATUS_ID;
+  const amount = parseFloat(invoice.opportunity || invoice.PRICE || 0);
+  const currency = invoice.currencyId || invoice.CURRENCY_ID || 'RUB';
+
+  console.log(`\n[HANDLER] Счёт ID=${invoiceId}`);
+  console.log(`[HANDLER]   status:   ${status}`);
+  console.log(`[HANDLER]   amount:   ${amount}`);
+  console.log(`[HANDLER]   currency: ${currency}`);
+
+  // Проверяем интересует ли нас этот статус
+  const notificationType = INVOICE_STATUSES[status];
+  if (!notificationType) {
+    console.log(`[HANDLER] ℹ️ Статус "${status}" не отслеживается`);
+    return;
+  }
+
+  // Проверяем не отправляли ли уже
+  const existing = await invoiceNotificationExists(invoiceId, status);
+  if (existing) {
+    console.log(`[HANDLER] ℹ️ Уведомление для счёта ${invoiceId} со статусом ${status} уже существует (${existing.status})`);
     return;
   }
 
   // Создаём уведомление
-  await createNotification({
-    dealId: parseInt(dealId),
-    invoiceId: parseInt(invoiceId),
+  await createInvoiceNotification({
+    invoiceId,
+    dealId: dealData.dealId,
+    contactId: dealData.contactId,
+    leadId: dealData.leadId,
     invoiceStatus: status,
-    type: notificationType,
-    contactId,
-    leadId,
-    dealTitle,
+    amount,
+    currency,
+    notificationType,
   });
 
-  console.log(`✅ [HANDLER] Счёт → уведомление "${notificationType}" в очереди`);
+  console.log(`✅ [HANDLER] Счёт ${invoiceId} → уведомление "${notificationType}" в очереди`);
+}
+
+/**
+ * Сбросить триггер счёта в сделке через API
+ */
+async function resetInvoiceTrigger(dealId) {
+  try {
+    console.log(`\n[B24] Сброс триггера счёта в сделке ${dealId}`);
+    const response = await axios.post(
+      `${BITRIX_WEBHOOK}/crm.deal.update`,
+      {
+        id: dealId,
+        fields: {
+          [DEAL_INVOICE_TRIGGER]: '0',
+        },
+      }
+    );
+    console.log(`[B24] Триггер сброшен:`, JSON.stringify(response.data, null, 2));
+  } catch (error) {
+    console.error('[B24] Ошибка сброса триггера:', error.message);
+  }
 }
 
 // ─── Запросы к Б24 ────────────────────────────────────────────────────────────
@@ -252,36 +248,32 @@ async function getDeal(dealId) {
   }
 }
 
-async function getInvoice(invoiceId) {
+/**
+ * Получить все счета по сделке
+ */
+async function getInvoicesByDeal(dealId) {
   try {
-    console.log(`[B24] crm.item.get invoice ID=${invoiceId}`);
+    console.log(`[B24] Запрос счетов для сделки ${dealId}`);
+
     const response = await axios.post(
-      `${BITRIX_WEBHOOK}/crm.item.get`,
+      `${BITRIX_WEBHOOK}/crm.item.list`,
       {
-        entityTypeId: 31, // Счёт в Б24
-        id: invoiceId,
+        entityTypeId: 31,
+        filter: { parentId2: dealId },
+        select: ['id', 'stageId', 'opportunity', 'currencyId', 'title', 'createdTime'],
+        order: { createdTime: 'DESC' },
       }
     );
-    console.log(`[B24] Счёт:`, JSON.stringify(response.data?.result, null, 2));
-    return response.data?.result?.item || null;
-  } catch (error) {
-    console.error('[B24] Ошибка crm.item.get (invoice):', error.message);
-    // Пробуем старый метод
-    return await getInvoiceLegacy(invoiceId);
-  }
-}
 
-async function getInvoiceLegacy(invoiceId) {
-  try {
-    console.log(`[B24] crm.invoice.get ID=${invoiceId} (legacy)`);
-    const response = await axios.post(
-      `${BITRIX_WEBHOOK}/crm.invoice.get`,
-      { id: invoiceId }
-    );
-    console.log(`[B24] Счёт (legacy):`, JSON.stringify(response.data?.result, null, 2));
-    return response.data?.result || null;
+    console.log(`[B24] Ответ счетов:`, JSON.stringify(response.data, null, 2));
+
+    const items = response.data?.result?.items || [];
+    console.log(`[B24] Найдено счетов: ${items.length}`);
+    return items;
+
   } catch (error) {
-    console.error('[B24] Ошибка crm.invoice.get:', error.message);
-    return null;
+    console.error('[B24] Ошибка получения счетов:', error.message);
+    console.error('[B24] Response:', JSON.stringify(error.response?.data, null, 2));
+    return [];
   }
 }

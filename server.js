@@ -1,11 +1,6 @@
 import express from 'express';
 import dotenv from 'dotenv';
-import {
-  handleDealUpdate,
-  handleInvoiceAdd,
-  handleInvoiceUpdate,
-  validateToken,
-} from './handlers/bitrix.js';
+import { handleDealUpdate, validateToken } from './handlers/bitrix.js';
 dotenv.config();
 
 const app = express();
@@ -36,7 +31,6 @@ app.post('/webhook/bitrix', async (req, res) => {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
-  // Сразу отвечаем Б24
   res.json({ status: 'ok' });
 
   try {
@@ -48,14 +42,6 @@ app.post('/webhook/bitrix', async (req, res) => {
     switch (event) {
       case 'ONCRMDEALUPDATE':
         await handleDealUpdate(data);
-        break;
-
-      case 'ONCRMINVOICEADD':
-        await handleInvoiceAdd(data);
-        break;
-
-      case 'ONCRMINVOICEUPDATE':
-        await handleInvoiceUpdate(data);
         break;
 
       default:
@@ -74,8 +60,10 @@ app.use((req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n${'='.repeat(50)}`);
-  console.log(`🚀 Webhook сервер запущен на порту ${PORT}`);
-  console.log(`🔑 Поле договора: ${process.env.DEAL_CONTRACT_FIELD}`);
-  console.log(`🛡️  Проверка токена: ${process.env.BITRIX_APP_TOKEN ? 'включена' : 'отключена'}`);
+  console.log(`🚀 Webhook сервер: порт ${PORT}`);
+  console.log(`📋 Договор поле: ${process.env.DEAL_CONTRACT_FIELD}`);
+  console.log(`🧾 Счёт триггер: ${process.env.DEAL_INVOICE_TRIGGER}`);
+  console.log(`📂 Категории договора: ${process.env.CONTRACT_CATEGORY_IDS}`);
+  console.log(`📂 Категории счетов:   ${process.env.INVOICE_CATEGORY_IDS}`);
   console.log(`${'='.repeat(50)}\n`);
 });
