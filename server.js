@@ -1,6 +1,11 @@
 import express from 'express';
 import dotenv from 'dotenv';
-import { handleDealUpdate, validateToken } from './handlers/bitrix.js';
+import {
+  handleDealUpdate,
+  handleInvoiceAdd,
+  handleInvoiceUpdate,
+  validateToken,
+} from './handlers/bitrix.js';
 dotenv.config();
 
 const app = express();
@@ -9,7 +14,6 @@ const PORT = process.env.PORT || 5005;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Лог всех входящих запросов
 app.use((req, res, next) => {
   console.log(`\n${'='.repeat(50)}`);
   console.log(`[SERVER] ${new Date().toISOString()}`);
@@ -19,21 +23,13 @@ app.use((req, res, next) => {
   next();
 });
 
-// Проверка работы
 app.get('/webhook/', (req, res) => {
-  res.json({
-    status: 'ok',
-    server: 'webhook-server',
-    port: PORT,
-    time: new Date().toISOString(),
-  });
+  res.json({ status: 'ok', server: 'webhook-server', port: PORT });
 });
 
-// Вебхук от Битрикс24
 app.post('/webhook/bitrix', async (req, res) => {
-  console.log('\n[WEBHOOK] ← Получен запрос от Битрикс24');
+  console.log('\n[WEBHOOK] ← Запрос от Битрикс24');
 
-  // Проверяем токен
   const auth = req.body?.auth;
   if (!validateToken(auth)) {
     console.log('[WEBHOOK] ❌ Отклонён — неверный токен');
@@ -44,20 +40,22 @@ app.post('/webhook/bitrix', async (req, res) => {
   res.json({ status: 'ok' });
 
   try {
-    const body = req.body;
-    const event = body?.event;
+    const event = req.body?.event;
+    const data = req.body?.data;
 
     console.log(`[WEBHOOK] Событие: "${event}"`);
 
-    if (!event) {
-      console.log('[WEBHOOK] ❌ Нет поля event');
-      return;
-    }
-
     switch (event) {
       case 'ONCRMDEALUPDATE':
-        console.log('[WEBHOOK] → handleDealUpdate');
-        await handleDealUpdate(body.data);
+        await handleDealUpdate(data);
+        break;
+
+      case 'ONCRMINVOICEADD':
+        await handleInvoiceAdd(data);
+        break;
+
+      case 'ONCRMINVOICEUPDATE':
+        await handleInvoiceUpdate(data);
         break;
 
       default:
@@ -69,7 +67,6 @@ app.post('/webhook/bitrix', async (req, res) => {
   }
 });
 
-// 404
 app.use((req, res) => {
   console.log(`[SERVER] 404: ${req.method} ${req.url}`);
   res.status(404).json({ error: 'Not found', path: req.url });

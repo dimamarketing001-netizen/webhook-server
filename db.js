@@ -21,7 +21,6 @@ const pool = mysql.createPool({
   connectTimeout: 10000,
 });
 
-// Проверка подключения
 try {
   const conn = await pool.getConnection();
   console.log('✅ [DB] Подключение успешно');
@@ -31,16 +30,32 @@ try {
 }
 
 /**
- * Проверить существует ли уже уведомление
+ * Проверить существует ли уведомление
+ * Для счетов ищем по invoice_id + type
+ * Для договоров ищем по deal_id + type
  */
-export async function notificationExists(dealId, type) {
+export async function notificationExists(entityId, type) {
   try {
+    // Для счётов
+    if (type === 'invoice_new' || type === 'invoice_confirmed') {
+      const [rows] = await pool.execute(
+        'SELECT id, status FROM notifications WHERE invoice_id = ? AND type = ?',
+        [entityId, type]
+      );
+      if (rows.length > 0) {
+        console.log(`[DB] Уведомление существует: invoice_id=${entityId}, type=${type}, status=${rows[0].status}`);
+        return rows[0];
+      }
+      return null;
+    }
+
+    // Для договоров
     const [rows] = await pool.execute(
       'SELECT id, status FROM notifications WHERE deal_id = ? AND type = ?',
-      [dealId, type]
+      [entityId, type]
     );
     if (rows.length > 0) {
-      console.log(`[DB] Уведомление уже существует: deal_id=${dealId}, type=${type}, status=${rows[0].status}`);
+      console.log(`[DB] Уведомление существует: deal_id=${entityId}, type=${type}, status=${rows[0].status}`);
       return rows[0];
     }
     return null;
@@ -51,23 +66,35 @@ export async function notificationExists(dealId, type) {
 }
 
 /**
- * Создать уведомление со статусом pending
+ * Создать уведомление
  */
-export async function createNotification({ dealId, type, contactId, leadId, dealTitle }) {
+export async function createNotification({
+  dealId,
+  invoiceId = null,
+  invoiceStatus = null,
+  type,
+  contactId,
+  leadId,
+  dealTitle,
+}) {
   try {
-    console.log(`[DB] Создание уведомления:`, { dealId, type, contactId, leadId, dealTitle });
+    console.log(`[DB] Создание уведомления:`, {
+      dealId, invoiceId, invoiceStatus, type, contactId, leadId, dealTitle,
+    });
 
     const [result] = await pool.execute(
       `INSERT INTO notifications 
-        (deal_id, type, status, contact_id, lead_id, deal_title)
-       VALUES (?, ?, 'pending', ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         status = 'pending',
-         contact_id = VALUES(contact_id),
-         lead_id = VALUES(lead_id),
-         deal_title = VALUES(deal_title),
-         updated_at = CURRENT_TIMESTAMP`,
-      [dealId, type, contactId || null, leadId || null, dealTitle || null]
+        (deal_id, invoice_id, invoice_status, type, status, contact_id, lead_id, deal_title)
+       VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`,
+      [
+        dealId || null,
+        invoiceId || null,
+        invoiceStatus || null,
+        type,
+        contactId || null,
+        leadId || null,
+        dealTitle || null,
+      ]
     );
 
     console.log(`✅ [DB] Уведомление создано: id=${result.insertId}`);
