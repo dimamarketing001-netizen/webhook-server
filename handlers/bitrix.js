@@ -15,7 +15,7 @@ const APP_TOKEN = process.env.BITRIX_APP_TOKEN;
 
 // Категории сделок
 const CONTRACT_CATEGORIES = (process.env.CONTRACT_CATEGORY_IDS || '0').split(',').map(s => s.trim());
-const INVOICE_CATEGORIES = (process.env.INVOICE_CATEGORY_IDS || '0,14,16').split(',').map(s => s.trim());
+const INVOICE_CATEGORIES = (process.env.INVOICE_CATEGORY_IDS || '0,18,16').split(',').map(s => s.trim());
 
 // Статусы счетов которые нас интересуют
 const INVOICE_STATUSES = {
@@ -68,7 +68,7 @@ export async function handleDealUpdate(data) {
     await checkContractField(deal);
   }
 
-  // ── Проверяем триггер счёта (Category_id=0,14,16) ─────────────────────────
+  // ── Проверяем триггер счёта (Category_id=0,18,16) ─────────────────────────
   if (INVOICE_CATEGORIES.includes(categoryId)) {
     await checkInvoiceTrigger(deal);
   }
