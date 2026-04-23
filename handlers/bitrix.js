@@ -189,14 +189,16 @@ async function checkInvoiceTrigger(deal) {
   const contactId = deal.CONTACT_ID ? parseInt(deal.CONTACT_ID) : null;
   const leadId = deal.LEAD_ID ? parseInt(deal.LEAD_ID) : null;
   const dealTitle = deal.TITLE || `Сделка #${dealId}`;
+  const dealTypeId = deal.TYPE_ID ? String(deal.TYPE_ID) : null; // ← добавили
+
+  console.log(`[HANDLER] deal_type_id: ${dealTypeId}`);
 
   if (!contactId && !leadId) {
-    console.log(`[HANDLER] ❌ Нет CONTACT_ID и LEAD_ID — некому отправлять`);
+    console.log(`[HANDLER] ❌ Нет CONTACT_ID и LEAD_ID`);
     await resetInvoiceTrigger(dealId);
     return;
   }
 
-  // Получаем все счета сделки
   const invoices = await getInvoicesByDeal(dealId);
   console.log(`[HANDLER] Найдено счетов: ${invoices.length}`);
 
@@ -206,23 +208,19 @@ async function checkInvoiceTrigger(deal) {
     return;
   }
 
-  // Обрабатываем каждый счёт
   for (const invoice of invoices) {
     await processInvoice(invoice, {
       dealId: parseInt(dealId),
       contactId,
       leadId,
       dealTitle,
+      dealTypeId, // ← передаём
     });
   }
 
-  // Сбрасываем триггер через API
   await resetInvoiceTrigger(dealId);
 }
 
-/**
- * Обработка одного счёта
- */
 async function processInvoice(invoice, dealData) {
   const invoiceId = parseInt(invoice.id);
   const status = invoice.stageId || invoice.STATUS_ID;
@@ -230,25 +228,23 @@ async function processInvoice(invoice, dealData) {
   const currency = invoice.currencyId || invoice.CURRENCY_ID || 'RUB';
 
   console.log(`\n[HANDLER] Счёт ID=${invoiceId}`);
-  console.log(`[HANDLER]   status:   ${status}`);
-  console.log(`[HANDLER]   amount:   ${amount}`);
-  console.log(`[HANDLER]   currency: ${currency}`);
+  console.log(`[HANDLER]   status:      ${status}`);
+  console.log(`[HANDLER]   amount:      ${amount}`);
+  console.log(`[HANDLER]   currency:    ${currency}`);
+  console.log(`[HANDLER]   dealTypeId:  ${dealData.dealTypeId}`);
 
-  // Проверяем интересует ли нас этот статус
   const notificationType = INVOICE_STATUSES[status];
   if (!notificationType) {
     console.log(`[HANDLER] ℹ️ Статус "${status}" не отслеживается`);
     return;
   }
 
-  // Проверяем не отправляли ли уже
   const existing = await invoiceNotificationExists(invoiceId, status);
   if (existing) {
-    console.log(`[HANDLER] ℹ️ Уведомление для счёта ${invoiceId} со статусом ${status} уже существует (${existing.status})`);
+    console.log(`[HANDLER] ℹ️ Уведомление для счёта ${invoiceId} уже существует (${existing.status})`);
     return;
   }
 
-  // Создаём уведомление
   await createInvoiceNotification({
     invoiceId,
     dealId: dealData.dealId,
@@ -258,9 +254,10 @@ async function processInvoice(invoice, dealData) {
     amount,
     currency,
     notificationType,
+    dealTypeId: dealData.dealTypeId, // ← передаём
   });
 
-  console.log(`✅ [HANDLER] Счёт ${invoiceId} → уведомление "${notificationType}" в очереди`);
+  console.log(`✅ [HANDLER] Счёт ${invoiceId} → "${notificationType}" в очереди`);
 }
 
 /**
