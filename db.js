@@ -154,13 +154,20 @@ export async function createStageNotification({
     const [result] = await pool.execute(
       `INSERT INTO deal_stage_notifications
         (deal_id, stage_id, stage_name, contact_id, lead_id, deal_type_id, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
+       VALUES (?, ?, ?, ?, ?, ?, 'pending')
+       ON DUPLICATE KEY UPDATE
+         stage_name = VALUES(stage_name),
+         contact_id = VALUES(contact_id),
+         lead_id = VALUES(lead_id),
+         deal_type_id = VALUES(deal_type_id),
+         status = IF(status = 'sent', 'sent', 'pending'),
+         updated_at = CURRENT_TIMESTAMP`,
       [
         dealId || null, stageId, stageName || null,
         contactId || null, leadId || null, dealTypeId || null,
       ]
     );
-    console.log(`✅ [DB] Stage уведомление создано: id=${result.insertId}`);
+    console.log(`✅ [DB] Stage уведомление создано/обновлено: id=${result.insertId || 'updated'}`);
     return result;
   } catch (err) {
     console.error('[DB] Ошибка createStageNotification:', err.message);

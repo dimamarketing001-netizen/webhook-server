@@ -381,9 +381,10 @@ async function checkDealStage(deal) {
     return;
   }
 
+  // Проверяем только если уже sent — тогда не дублируем
   const existing = await stageNotificationExists(dealId, stageId);
-  if (existing?.status === 'sent' || existing?.status === 'pending') {
-    console.log(`[HANDLER] ℹ️ Стадия уже в очереди или отправлена`);
+  if (existing?.status === 'sent') {
+    console.log(`[HANDLER] ℹ️ Стадия уже отправлена`);
     return;
   }
 
