@@ -54,10 +54,17 @@ export async function createNotification({ dealId, type, contactId, leadId, deal
     const [result] = await pool.execute(
       `INSERT INTO notifications 
         (deal_id, type, status, contact_id, lead_id, deal_title, deal_type_id)
-       VALUES (?, ?, 'pending', ?, ?, ?, ?)`,
+       VALUES (?, ?, 'pending', ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         status = 'pending',
+         contact_id = VALUES(contact_id),
+         lead_id = VALUES(lead_id),
+         deal_title = VALUES(deal_title),
+         deal_type_id = VALUES(deal_type_id),
+         updated_at = CURRENT_TIMESTAMP`,
       [dealId || null, type, contactId || null, leadId || null, dealTitle || null, dealTypeId || null]
     );
-    console.log(`✅ [DB] Уведомление создано: id=${result.insertId}`);
+    console.log(`✅ [DB] Уведомление создано/обновлено: id=${result.insertId || 'updated'}`);
     return result;
   } catch (err) {
     console.error('[DB] Ошибка createNotification:', err.message);
@@ -168,11 +175,11 @@ export async function savePaymentSchedule(dealId, schedule) {
   try {
     console.log(`[DB] savePaymentSchedule: deal_id=${dealId}, платежей=${schedule.length}`);
 
-    // Помечаем старые как skipped если были pending
+    // Помечаем ВСЕ старые pending и overdue как skipped
     await pool.execute(
       `UPDATE payment_schedule 
        SET status = 'skipped', updated_at = CURRENT_TIMESTAMP
-       WHERE deal_id = ? AND status = 'pending'`,
+       WHERE deal_id = ? AND status IN ('pending', 'overdue')`,
       [dealId]
     );
 
@@ -193,6 +200,7 @@ export async function savePaymentSchedule(dealId, schedule) {
            amount = VALUES(amount),
            cumulative_amount = VALUES(cumulative_amount),
            status = 'pending',
+           checked_at = NULL,
            updated_at = CURRENT_TIMESTAMP`,
         [
           p.dealId, p.contactId, p.dealTypeId || null, p.dealTitle || null,

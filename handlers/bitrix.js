@@ -159,7 +159,7 @@ async function checkContractField(deal) {
     return;
   }
 
-  // Уведомление о договоре — всегда создаём новое (ON DUPLICATE KEY UPDATE)
+  // Уведомление о договоре
   await createNotification({
     dealId: parseInt(dealId),
     type: 'contract_ready',
@@ -171,8 +171,18 @@ async function checkContractField(deal) {
 
   console.log(`✅ [HANDLER] Договор → уведомление в очереди`);
 
-  // Сохраняем график платежей
+  // Сохраняем новый график платежей
   await updatePaymentSchedule(deal);
+
+  // Если был активный цикл просрочки — закрываем (договор переформирован)
+  const activeCycle = await getActiveOverdueCycle(parseInt(dealId));
+  if (activeCycle) {
+    console.log(`[HANDLER] ℹ️ Найден активный цикл id=${activeCycle.id} — закрываем (договор переформирован)`);
+    await updateOverdueCycleStatus(activeCycle.id, 'resolved');
+    if (contactId) {
+      await updateOverdueClientStatus(contactId, 'active');
+    }
+  }
 
   // Сбрасываем поле договора = 0
   await resetContractField(dealId);
@@ -217,7 +227,7 @@ async function updatePaymentSchedule(deal) {
       continue;
     }
 
-    cumulative += amount;
+    cumulative = Math.round((cumulative + amount) * 100) / 100;
 
     const checkDate = addDays(paymentDate, 1); // просрочка = дата + 1 день
 
