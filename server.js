@@ -89,7 +89,26 @@ app.post('/bot-command', async (req, res) => {
     // Отправляем сообщение пользователю
     const response = await axios.post(
       'https://platform-api.max.ru/messages',
-      { text, format: 'markdown' },
+      {
+        text,
+        format: 'markdown',
+        attachments: [
+          {
+            type: 'inline_keyboard',
+            payload: {
+              buttons: [
+                [
+                  {
+                    type: 'callback',
+                    text: '❌ Отмена',
+                    payload: 'cancel'
+                  }
+                ]
+              ]
+            }
+          }
+        ]
+      },
       {
         headers: {
           Authorization: BOT_TOKEN,
