@@ -245,36 +245,62 @@ async function getStageName(categoryId, stageId) {
     }
   }
 
-  // Запрашиваем стадии категории
   try {
-    console.log(`[B24] crm.dealcategory.stages categoryId=${categoryId}`);
-    const response = await axios.post(
-      `${BITRIX_WEBHOOK}/crm.dealcategory.stages`,
-      { id: categoryId }
-    );
+    // Для категории 0 используем crm.dealcategory.stages
+    // Для остальных используем crm.status.list
+    let stages = [];
 
-    console.log(`[B24] Стадии:`, JSON.stringify(response.data, null, 2));
+    if (categoryId === '0') {
+      console.log(`[B24] crm.dealcategory.stages для category=0`);
+      const response = await axios.post(
+        `${BITRIX_WEBHOOK}/crm.dealcategory.stages`,
+        { id: 0 }
+      );
+      stages = response.data?.result || [];
+      console.log(`[B24] RAW stages (category=0):`, JSON.stringify(stages, null, 2));
 
-    const stages = response.data?.result;
+    } else {
+      // Для кастомных категорий используем crm.status.list
+      // Стадии хранятся с ENTITY_ID = DEAL_STAGE_categoryId
+      const entityId = `DEAL_STAGE_${categoryId}`;
+      console.log(`[B24] crm.status.list ENTITY_ID="${entityId}"`);
+
+      const response = await axios.post(
+        `${BITRIX_WEBHOOK}/crm.status.list`,
+        {
+          filter: { ENTITY_ID: entityId },
+        }
+      );
+
+      console.log(`[B24] RAW status.list:`, JSON.stringify(response.data, null, 2));
+      stages = response.data?.result || [];
+    }
+
     if (!stages || stages.length === 0) {
-      console.log(`[B24] Стадии не найдены для category=${categoryId}`);
+      console.log(`[B24] ❌ Стадии не найдены для category=${categoryId}`);
       return stageId;
     }
 
-    // Строим маппинг { stageId: stageName }
+    // Строим маппинг
     const stageMap = {};
     for (const stage of stages) {
-      stageMap[stage.STATUS_ID] = stage.NAME;
+      // crm.dealcategory.stages возвращает STATUS_ID и NAME
+      // crm.status.list возвращает STATUS_ID и NAME
+      const id = stage.STATUS_ID;
+      const name = stage.NAME;
+      console.log(`[B24] Стадия: STATUS_ID="${id}" NAME="${name}"`);
+      stageMap[id] = name;
     }
 
-    // Сохраняем в кэш
     stagesCache.set(categoryId, stageMap);
-    console.log(`[B24] Кэш стадий для category=${categoryId}:`, stageMap);
+    console.log(`[B24] Маппинг стадий category=${categoryId}:`, JSON.stringify(stageMap, null, 2));
+    console.log(`[B24] Ищем "${stageId}" → "${stageMap[stageId]}"`);
 
     return stageMap[stageId] || stageId;
 
   } catch (error) {
-    console.error('[B24] Ошибка crm.dealcategory.stages:', error.message);
+    console.error('[B24] Ошибка getStageName:', error.message);
+    console.error('[B24] Response:', JSON.stringify(error.response?.data, null, 2));
     return stageId;
   }
 }
