@@ -1,10 +1,12 @@
 import express from 'express';
 import dotenv from 'dotenv';
+import axios from 'axios';
 import { handleDealUpdate, validateToken } from './handlers/bitrix.js';
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5005;
+const BOT_TOKEN = process.env.BOT_TOKEN;
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
