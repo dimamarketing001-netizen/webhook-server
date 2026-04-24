@@ -14,6 +14,8 @@ import {
   createOverdueCycle,
   createOverdueNotifications,
   savePaymentSchedule,
+  updateOverdueCycleStatus,
+  updateOverdueCycleAmount,
 } from '../db.js';
 dotenv.config();
 
@@ -320,6 +322,7 @@ async function checkInvoiceTrigger(deal) {
 /**
  * Пересчёт просрочки при получении нового счёта
  */
+// Добавить в recalcOverdue после закрытия цикла:
 async function recalcOverdue(deal, paidAmount) {
   const dealId = deal.ID;
   const contactId = deal.CONTACT_ID ? parseInt(deal.CONTACT_ID) : null;
@@ -327,31 +330,28 @@ async function recalcOverdue(deal, paidAmount) {
   console.log(`\n[HANDLER] Пересчёт просрочки для сделки ${dealId}`);
   console.log(`[HANDLER] Оплачено (подтверждённые): ${paidAmount} руб`);
 
-  // Проверяем активный цикл
   const activeCycle = await getActiveOverdueCycle(dealId);
 
   if (activeCycle) {
     console.log(`[HANDLER] Активный цикл: id=${activeCycle.id}`);
 
-    // Сумма которую нужно было оплатить по этому платежу
     const cumulativeNeeded = parseFloat(activeCycle.paid_amount_at_start) +
       parseFloat(activeCycle.overdue_amount);
 
     console.log(`[HANDLER] Нужно: ${cumulativeNeeded}, оплачено: ${paidAmount}`);
 
     if (paidAmount >= cumulativeNeeded) {
-      // Оплатил — закрываем цикл
       console.log(`[HANDLER] ✅ Просрочка погашена! Закрываем цикл`);
       await updateOverdueCycleStatus(activeCycle.id, 'resolved');
       await updateOverdueClientStatus(contactId, 'active');
+      await markPaymentAsPaid(dealId, activeCycle.overdue_payment_date, paidAmount);
     } else {
-      // Частично оплатил — обновляем сумму просрочки
       const newOverdueAmount = cumulativeNeeded - paidAmount;
-      console.log(`[HANDLER] ℹ️ Частичная оплата, новая сумма просрочки: ${newOverdueAmount}`);
+      console.log(`[HANDLER] ℹ️ Частичная оплата, новая сумма: ${newOverdueAmount}`);
       await updateOverdueCycleAmount(activeCycle.id, newOverdueAmount);
     }
   } else {
-    console.log(`[HANDLER] ℹ️ Активных циклов нет — пересчёт не нужен`);
+    console.log(`[HANDLER] ℹ️ Активных циклов нет`);
   }
 }
 
@@ -604,17 +604,4 @@ function addDays(date, days) {
   const result = new Date(date);
   result.setDate(result.getDate() + days);
   return result;
-}
-
-// Импорты из db.js для обновления цикла
-async function updateOverdueCycleStatus(cycleId, status) {
-  const { default: pool } = await import('../db.js');
-}
-
-async function updateOverdueClientStatus(contactId, status) {
-  const { default: pool } = await import('../db.js');
-}
-
-async function updateOverdueCycleAmount(cycleId, newAmount) {
-  const { default: pool } = await import('../db.js');
 }

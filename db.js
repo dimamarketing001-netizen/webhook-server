@@ -263,4 +263,127 @@ export async function updateOverdueCycleAmount(cycleId, newAmount) {
   }
 }
 
+export async function getOrCreateOverdueClient({ contactId, contactName, maxUserId }) {
+  try {
+    const [rows] = await pool.execute(
+      'SELECT * FROM overdue_clients WHERE contact_id = ?',
+      [contactId]
+    );
+
+    if (rows.length > 0) {
+      console.log(`[DB] overdue_clients: уже существует contact_id=${contactId}`);
+      return rows[0];
+    }
+
+    const [userRows] = await pool.execute(
+      'SELECT max_user_id FROM users WHERE bitrix_contact_id = ?',
+      [contactId]
+    );
+    const userId = userRows[0]?.max_user_id || maxUserId || null;
+
+    const [result] = await pool.execute(
+      `INSERT INTO overdue_clients (contact_id, max_user_id, contact_name, client_status)
+       VALUES (?, ?, ?, 'active')`,
+      [contactId, userId, contactName || null]
+    );
+
+    console.log(`✅ [DB] overdue_clients создан: id=${result.insertId}`);
+    return { id: result.insertId, contact_id: contactId };
+  } catch (err) {
+    console.error('[DB] Ошибка getOrCreateOverdueClient:', err.message);
+    throw err;
+  }
+}
+
+export async function getCycleByPaymentDate(dealId, paymentDate) {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT * FROM overdue_cycles
+       WHERE deal_id = ? AND overdue_payment_date = ?
+       LIMIT 1`,
+      [dealId, paymentDate]
+    );
+    return rows[0] || null;
+  } catch (err) {
+    console.error('[DB] Ошибка getCycleByPaymentDate:', err.message);
+    return null;
+  }
+}
+
+export async function getActiveOverdueCycle(dealId) {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT * FROM overdue_cycles
+       WHERE deal_id = ? AND cycle_status = 'active'
+       LIMIT 1`,
+      [dealId]
+    );
+    return rows[0] || null;
+  } catch (err) {
+    console.error('[DB] Ошибка getActiveOverdueCycle:', err.message);
+    return null;
+  }
+}
+
+export async function createOverdueCycle({
+  contactId, dealId, dealTypeId, dealTitle,
+  contractNumber, contractDate,
+  overduePaymentDate, overdueAmount, paidAmountAtStart,
+  totalSchedule, overdueStartDate,
+}) {
+  try {
+    const [result] = await pool.execute(
+      `INSERT INTO overdue_cycles
+        (contact_id, deal_id, deal_type_id, deal_title,
+         contract_number, contract_date,
+         overdue_payment_date, overdue_amount, paid_amount_at_start,
+         total_schedule, overdue_start_date, cycle_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+      [
+        contactId, dealId, dealTypeId || null, dealTitle || null,
+        contractNumber || null, contractDate || null,
+        overduePaymentDate, overdueAmount, paidAmountAtStart || 0,
+        totalSchedule || 0, overdueStartDate,
+      ]
+    );
+    console.log(`✅ [DB] overdue_cycles создан: id=${result.insertId}`);
+    return result.insertId;
+  } catch (err) {
+    console.error('[DB] Ошибка createOverdueCycle:', err.message);
+    throw err;
+  }
+}
+
+export async function createOverdueNotifications(notifications) {
+  try {
+    for (const n of notifications) {
+      await pool.execute(
+        `INSERT INTO overdue_notifications
+          (cycle_id, contact_id, day_number, status, scheduled_date)
+         VALUES (?, ?, ?, 'pending', ?)`,
+        [n.cycleId, n.contactId, n.dayNumber, n.scheduledDate]
+      );
+    }
+    console.log(`✅ [DB] overdue_notifications: ${notifications.length} записей`);
+  } catch (err) {
+    console.error('[DB] Ошибка createOverdueNotifications:', err.message);
+    throw err;
+  }
+}
+
+export async function markPaymentAsPaid(dealId, paymentDate, paidAmount) {
+  try {
+    await pool.execute(
+      `UPDATE payment_schedule
+       SET status = 'paid', checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+       WHERE deal_id = ? AND payment_date = ? AND status = 'overdue'`,
+      [dealId, paymentDate]
+    );
+    console.log(`[DB] payment_schedule deal_id=${dealId} payment_date=${paymentDate} → paid`);
+  } catch (err) {
+    console.error('[DB] Ошибка markPaymentAsPaid:', err.message);
+  }
+}
+
+
 export default pool;
