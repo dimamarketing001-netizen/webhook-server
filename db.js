@@ -161,4 +161,106 @@ export async function createStageNotification({
   }
 }
 
+/**
+ * Сохранить график платежей (перезаписываем)
+ */
+export async function savePaymentSchedule(dealId, schedule) {
+  try {
+    console.log(`[DB] savePaymentSchedule: deal_id=${dealId}, платежей=${schedule.length}`);
+
+    // Помечаем старые как skipped если были pending
+    await pool.execute(
+      `UPDATE payment_schedule 
+       SET status = 'skipped', updated_at = CURRENT_TIMESTAMP
+       WHERE deal_id = ? AND status = 'pending'`,
+      [dealId]
+    );
+
+    // Вставляем новые
+    for (const p of schedule) {
+      await pool.execute(
+        `INSERT INTO payment_schedule
+          (deal_id, contact_id, deal_type_id, deal_title, contract_number,
+           payment_number, payment_date, check_date, amount, cumulative_amount, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+         ON DUPLICATE KEY UPDATE
+           contact_id = VALUES(contact_id),
+           deal_type_id = VALUES(deal_type_id),
+           deal_title = VALUES(deal_title),
+           contract_number = VALUES(contract_number),
+           payment_date = VALUES(payment_date),
+           check_date = VALUES(check_date),
+           amount = VALUES(amount),
+           cumulative_amount = VALUES(cumulative_amount),
+           status = 'pending',
+           updated_at = CURRENT_TIMESTAMP`,
+        [
+          p.dealId, p.contactId, p.dealTypeId || null, p.dealTitle || null,
+          p.contractNumber || null, p.paymentNumber,
+          p.paymentDate, p.checkDate, p.amount, p.cumulativeAmount,
+        ]
+      );
+    }
+
+    console.log(`✅ [DB] График сохранён`);
+  } catch (err) {
+    console.error('[DB] Ошибка savePaymentSchedule:', err.message);
+    throw err;
+  }
+}
+
+export async function updateOverdueCycleStatus(cycleId, status) {
+  try {
+    const extra = status === 'resolved'
+      ? ', resolved_at = CURRENT_TIMESTAMP'
+      : status === 'completed'
+        ? ', completed_at = CURRENT_TIMESTAMP'
+        : '';
+
+    await pool.execute(
+      `UPDATE overdue_cycles
+       SET cycle_status = ? ${extra}, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [status, cycleId]
+    );
+    console.log(`[DB] overdue_cycles id=${cycleId} → ${status}`);
+  } catch (err) {
+    console.error('[DB] Ошибка updateOverdueCycleStatus:', err.message);
+  }
+}
+
+export async function updateOverdueClientStatus(contactId, status) {
+  try {
+    const extra = status === 'closed'
+      ? ', closed_at = CURRENT_TIMESTAMP'
+      : status === 'active'
+        ? ', stopped_by = NULL, stopped_at = NULL, closed_at = NULL'
+        : '';
+
+    await pool.execute(
+      `UPDATE overdue_clients
+       SET client_status = ? ${extra}, updated_at = CURRENT_TIMESTAMP
+       WHERE contact_id = ?`,
+      [status, contactId]
+    );
+    console.log(`[DB] overdue_clients contact_id=${contactId} → ${status}`);
+  } catch (err) {
+    console.error('[DB] Ошибка updateOverdueClientStatus:', err.message);
+  }
+}
+
+export async function updateOverdueCycleAmount(cycleId, newAmount) {
+  try {
+    await pool.execute(
+      `UPDATE overdue_cycles
+       SET overdue_amount = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [newAmount, cycleId]
+    );
+    console.log(`[DB] overdue_cycles id=${cycleId} → overdue_amount=${newAmount}`);
+  } catch (err) {
+    console.error('[DB] Ошибка updateOverdueCycleAmount:', err.message);
+  }
+}
+
 export default pool;
