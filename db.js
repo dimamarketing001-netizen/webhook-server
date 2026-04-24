@@ -232,6 +232,11 @@ export async function updateOverdueCycleStatus(cycleId, status) {
       [status, cycleId]
     );
     console.log(`[DB] overdue_cycles id=${cycleId} → ${status}`);
+
+    // Отменяем pending уведомления если цикл закрывается
+    if (status === 'resolved' || status === 'completed') {
+      await cancelPendingCycleNotifications(cycleId);
+    }
   } catch (err) {
     console.error('[DB] Ошибка updateOverdueCycleStatus:', err.message);
   }
@@ -393,5 +398,18 @@ export async function markPaymentAsPaid(dealId, paymentDate, paidAmount) {
   }
 }
 
+export async function cancelPendingCycleNotifications(cycleId) {
+  try {
+    await pool.execute(
+      `UPDATE overdue_notifications
+       SET status = 'skipped', error_message = 'Цикл закрыт', updated_at = CURRENT_TIMESTAMP
+       WHERE cycle_id = ? AND status = 'pending'`,
+      [cycleId]
+    );
+    console.log(`[DB] overdue_notifications cycle_id=${cycleId} pending → skipped`);
+  } catch (err) {
+    console.error('[DB] Ошибка cancelPendingCycleNotifications:', err.message);
+  }
+}
 
 export default pool;
