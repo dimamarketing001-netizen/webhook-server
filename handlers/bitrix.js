@@ -5,6 +5,8 @@ import {
   createNotification,
   invoiceNotificationExists,
   createInvoiceNotification,
+  stageNotificationExists,
+  createStageNotification,
 } from '../db.js';
 dotenv.config();
 
@@ -13,18 +15,22 @@ const DEAL_CONTRACT_FIELD = process.env.DEAL_CONTRACT_FIELD;
 const DEAL_INVOICE_TRIGGER = process.env.DEAL_INVOICE_TRIGGER;
 const APP_TOKEN = process.env.BITRIX_APP_TOKEN;
 
-// Категории сделок
+// Категории
 const CONTRACT_CATEGORIES = (process.env.CONTRACT_CATEGORY_IDS || '0').split(',').map(s => s.trim());
-const INVOICE_CATEGORIES = (process.env.INVOICE_CATEGORY_IDS || '0,18,16').split(',').map(s => s.trim());
+const INVOICE_CATEGORIES = (process.env.INVOICE_CATEGORY_IDS || '0,16,18').split(',').map(s => s.trim());
+const STAGE_CATEGORIES = (process.env.STAGE_CATEGORY_IDS || '2,4,6,8,10,12').split(',').map(s => s.trim());
 
-const DEAL_WON_STAGE = 'WON';
-const DEAL_WON_CATEGORY = '0';
-
-// Статусы счетов которые нас интересуют
+// Статусы счетов
 const INVOICE_STATUSES = {
   'DT31_2:N': 'invoice_unconfirmed',
   'DT31_2:P': 'invoice_confirmed',
 };
+
+// Исключаемые суффиксы стадий (без префикса категории)
+const EXCLUDED_STAGE_SUFFIXES = ['NEW', 'PREPARATION', '1'];
+
+// Кэш стадий { categoryId: { stageId: stageName } }
+const stagesCache = new Map();
 
 /**
  * Проверка токена
@@ -43,7 +49,7 @@ export function validateToken(auth) {
   return true;
 }
 
-// ─── СДЕЛКИ ───────────────────────────────────────────────────────────────────
+// ─── Главный обработчик ───────────────────────────────────────────────────────
 
 export async function handleDealUpdate(data) {
   console.log('\n[HANDLER] === ONCRMDEALUPDATE ===');
@@ -65,89 +71,47 @@ export async function handleDealUpdate(data) {
   const categoryId = deal.CATEGORY_ID;
   console.log(`[HANDLER] Category_id: ${categoryId}`);
 
-  // Проверяем WON (только Category_id=0)
-  await checkDealWon(deal);
+  // WON — только Category_id=0
+  if (categoryId === '0') {
+    await checkDealWon(deal);
+  }
 
-  // Проверяем договор (только Category_id=0)
+  // Договор — только Category_id=0
   if (CONTRACT_CATEGORIES.includes(categoryId)) {
     await checkContractField(deal);
   }
 
-  // Проверяем триггер счёта (Category_id=0,16,18)
+  // Триггер счёта — Category_id=0,16,18
   if (INVOICE_CATEGORIES.includes(categoryId)) {
     await checkInvoiceTrigger(deal);
   }
+
+  // Стадии — Category_id=2,4,6,8,10,12
+  if (STAGE_CATEGORIES.includes(categoryId)) {
+    await checkDealStage(deal);
+  }
 }
 
-// ─── ДОГОВОР ──────────────────────────────────────────────────────────────────
+// ─── WON ──────────────────────────────────────────────────────────────────────
 
-async function checkContractField(deal) {
-  const dealId = deal.ID;
-  const fieldValue = deal[DEAL_CONTRACT_FIELD];
-
-  console.log(`\n[HANDLER] Проверка договора: ${DEAL_CONTRACT_FIELD} = "${fieldValue}"`);
-
-  if (fieldValue !== '1') {
-    console.log(`[HANDLER] ℹ️ Поле договора не активно`);
-    return;
-  }
-
-  console.log(`[HANDLER] ✅ Договор сформирован!`);
-
-  const existing = await notificationExists(dealId, 'contract_ready');
-  if (existing?.status === 'sent') {
-    console.log(`[HANDLER] ℹ️ Уведомление уже отправлено`);
-    return;
-  }
-  if (existing?.status === 'pending') {
-    console.log(`[HANDLER] ℹ️ Уведомление уже в очереди`);
-    return;
-  }
-
-  const contactId = deal.CONTACT_ID ? parseInt(deal.CONTACT_ID) : null;
-  const leadId = deal.LEAD_ID ? parseInt(deal.LEAD_ID) : null;
-
-  if (!contactId && !leadId) {
-    console.log(`[HANDLER] ❌ Нет CONTACT_ID и LEAD_ID`);
-    return;
-  }
-
-  await createNotification({
-    dealId: parseInt(dealId),
-    type: 'contract_ready',
-    contactId,
-    leadId,
-    dealTitle: deal.TITLE || `Сделка #${dealId}`,
-    dealTypeId: deal.TYPE_ID || null,  // ← добавили
-  });
-
-  console.log(`✅ [HANDLER] Договор → уведомление в очереди`);
-}
-
-// ─── Новая функция checkDealWon ───────────────────────────────────────────────
 async function checkDealWon(deal) {
   const dealId = deal.ID;
   const stageId = deal.STAGE_ID;
-  const categoryId = deal.CATEGORY_ID;
 
-  console.log(`\n[HANDLER] Проверка WON: STAGE_ID="${stageId}", CATEGORY_ID="${categoryId}"`);
+  console.log(`\n[HANDLER] Проверка WON: STAGE_ID="${stageId}"`);
 
-  // Только Category_id=0 и стадия WON
-  if (categoryId !== DEAL_WON_CATEGORY || stageId !== DEAL_WON_STAGE) {
-    console.log(`[HANDLER] ℹ️ Не подходит для уведомления WON`);
+  if (stageId !== 'WON') {
+    console.log(`[HANDLER] ℹ️ Стадия не WON`);
     return;
   }
 
-  console.log(`[HANDLER] ✅ Сделка выиграна! Начало производства`);
-
-  // Проверяем дубль — только одно уведомление на сделку
   const existing = await notificationExists(dealId, 'deal_won');
   if (existing?.status === 'sent') {
-    console.log(`[HANDLER] ℹ️ Уведомление WON уже отправлено`);
+    console.log(`[HANDLER] ℹ️ WON уже отправлено`);
     return;
   }
   if (existing?.status === 'pending') {
-    console.log(`[HANDLER] ℹ️ Уведомление WON уже в очереди`);
+    console.log(`[HANDLER] ℹ️ WON уже в очереди`);
     return;
   }
 
@@ -165,10 +129,154 @@ async function checkDealWon(deal) {
     contactId,
     leadId,
     dealTitle: deal.TITLE || `Сделка #${dealId}`,
-    dealTypeId: deal.TYPE_ID || null,
+    dealTypeId: deal.TYPE_ID ? String(deal.TYPE_ID) : null,
   });
 
   console.log(`✅ [HANDLER] WON → уведомление в очереди`);
+}
+
+// ─── ДОГОВОР ──────────────────────────────────────────────────────────────────
+
+async function checkContractField(deal) {
+  const dealId = deal.ID;
+  const fieldValue = deal[DEAL_CONTRACT_FIELD];
+
+  console.log(`\n[HANDLER] Проверка договора: ${DEAL_CONTRACT_FIELD} = "${fieldValue}"`);
+
+  if (fieldValue !== '1') {
+    console.log(`[HANDLER] ℹ️ Поле договора не активно`);
+    return;
+  }
+
+  const existing = await notificationExists(dealId, 'contract_ready');
+  if (existing?.status === 'sent') {
+    console.log(`[HANDLER] ℹ️ Договор уже отправлен`);
+    return;
+  }
+  if (existing?.status === 'pending') {
+    console.log(`[HANDLER] ℹ️ Договор уже в очереди`);
+    return;
+  }
+
+  const contactId = deal.CONTACT_ID ? parseInt(deal.CONTACT_ID) : null;
+  const leadId = deal.LEAD_ID ? parseInt(deal.LEAD_ID) : null;
+
+  if (!contactId && !leadId) {
+    console.log(`[HANDLER] ❌ Нет CONTACT_ID и LEAD_ID`);
+    return;
+  }
+
+  await createNotification({
+    dealId: parseInt(dealId),
+    type: 'contract_ready',
+    contactId,
+    leadId,
+    dealTitle: deal.TITLE || `Сделка #${dealId}`,
+    dealTypeId: deal.TYPE_ID ? String(deal.TYPE_ID) : null,
+  });
+
+  console.log(`✅ [HANDLER] Договор → уведомление в очереди`);
+}
+
+// ─── СТАДИИ ───────────────────────────────────────────────────────────────────
+
+async function checkDealStage(deal) {
+  const dealId = deal.ID;
+  const stageId = deal.STAGE_ID;
+  const categoryId = deal.CATEGORY_ID;
+
+  console.log(`\n[HANDLER] Проверка стадии: STAGE_ID="${stageId}", Category_id="${categoryId}"`);
+
+  // Проверяем исключённые стадии
+  // Стадия имеет вид C2:NEW — берём суффикс после ":"
+  const stageSuffix = stageId.includes(':') ? stageId.split(':')[1] : stageId;
+  console.log(`[HANDLER] Суффикс стадии: "${stageSuffix}"`);
+
+  if (EXCLUDED_STAGE_SUFFIXES.includes(stageSuffix)) {
+    console.log(`[HANDLER] ℹ️ Стадия "${stageId}" исключена из уведомлений`);
+    return;
+  }
+
+  // Проверяем дубль
+  const existing = await stageNotificationExists(dealId, stageId);
+  if (existing?.status === 'sent') {
+    console.log(`[HANDLER] ℹ️ Стадия "${stageId}" уже отправлена`);
+    return;
+  }
+  if (existing?.status === 'pending') {
+    console.log(`[HANDLER] ℹ️ Стадия "${stageId}" уже в очереди`);
+    return;
+  }
+
+  const contactId = deal.CONTACT_ID ? parseInt(deal.CONTACT_ID) : null;
+  const leadId = deal.LEAD_ID ? parseInt(deal.LEAD_ID) : null;
+
+  if (!contactId && !leadId) {
+    console.log(`[HANDLER] ❌ Нет CONTACT_ID и LEAD_ID`);
+    return;
+  }
+
+  // Получаем название стадии через API
+  const stageName = await getStageName(categoryId, stageId);
+  console.log(`[HANDLER] Название стадии: "${stageName}"`);
+
+  await createStageNotification({
+    dealId: parseInt(dealId),
+    stageId,
+    stageName,
+    contactId,
+    leadId,
+    dealTypeId: deal.TYPE_ID ? String(deal.TYPE_ID) : null,
+  });
+
+  console.log(`✅ [HANDLER] Стадия "${stageId}" → уведомление в очереди`);
+}
+
+/**
+ * Получить название стадии через API с кэшированием
+ */
+async function getStageName(categoryId, stageId) {
+  // Проверяем кэш
+  if (stagesCache.has(categoryId)) {
+    const cached = stagesCache.get(categoryId);
+    if (cached[stageId]) {
+      console.log(`[B24] Стадия из кэша: "${cached[stageId]}"`);
+      return cached[stageId];
+    }
+  }
+
+  // Запрашиваем стадии категории
+  try {
+    console.log(`[B24] crm.dealcategory.stages categoryId=${categoryId}`);
+    const response = await axios.post(
+      `${BITRIX_WEBHOOK}/crm.dealcategory.stages`,
+      { id: categoryId }
+    );
+
+    console.log(`[B24] Стадии:`, JSON.stringify(response.data, null, 2));
+
+    const stages = response.data?.result;
+    if (!stages || stages.length === 0) {
+      console.log(`[B24] Стадии не найдены для category=${categoryId}`);
+      return stageId;
+    }
+
+    // Строим маппинг { stageId: stageName }
+    const stageMap = {};
+    for (const stage of stages) {
+      stageMap[stage.STATUS_ID] = stage.NAME;
+    }
+
+    // Сохраняем в кэш
+    stagesCache.set(categoryId, stageMap);
+    console.log(`[B24] Кэш стадий для category=${categoryId}:`, stageMap);
+
+    return stageMap[stageId] || stageId;
+
+  } catch (error) {
+    console.error('[B24] Ошибка crm.dealcategory.stages:', error.message);
+    return stageId;
+  }
 }
 
 // ─── СЧЕТА ────────────────────────────────────────────────────────────────────
@@ -184,14 +292,11 @@ async function checkInvoiceTrigger(deal) {
     return;
   }
 
-  console.log(`[HANDLER] ✅ Триггер счёта активен — загружаем счета сделки`);
+  console.log(`[HANDLER] ✅ Триггер активен — загружаем счета`);
 
   const contactId = deal.CONTACT_ID ? parseInt(deal.CONTACT_ID) : null;
   const leadId = deal.LEAD_ID ? parseInt(deal.LEAD_ID) : null;
-  const dealTitle = deal.TITLE || `Сделка #${dealId}`;
-  const dealTypeId = deal.TYPE_ID ? String(deal.TYPE_ID) : null; // ← добавили
-
-  console.log(`[HANDLER] deal_type_id: ${dealTypeId}`);
+  const dealTypeId = deal.TYPE_ID ? String(deal.TYPE_ID) : null;
 
   if (!contactId && !leadId) {
     console.log(`[HANDLER] ❌ Нет CONTACT_ID и LEAD_ID`);
@@ -213,8 +318,8 @@ async function checkInvoiceTrigger(deal) {
       dealId: parseInt(dealId),
       contactId,
       leadId,
-      dealTitle,
-      dealTypeId, // ← передаём
+      dealTitle: deal.TITLE || `Сделка #${dealId}`,
+      dealTypeId,
     });
   }
 
@@ -227,11 +332,7 @@ async function processInvoice(invoice, dealData) {
   const amount = parseFloat(invoice.opportunity || invoice.PRICE || 0);
   const currency = invoice.currencyId || invoice.CURRENCY_ID || 'RUB';
 
-  console.log(`\n[HANDLER] Счёт ID=${invoiceId}`);
-  console.log(`[HANDLER]   status:      ${status}`);
-  console.log(`[HANDLER]   amount:      ${amount}`);
-  console.log(`[HANDLER]   currency:    ${currency}`);
-  console.log(`[HANDLER]   dealTypeId:  ${dealData.dealTypeId}`);
+  console.log(`\n[HANDLER] Счёт ID=${invoiceId}, status="${status}", amount=${amount}`);
 
   const notificationType = INVOICE_STATUSES[status];
   if (!notificationType) {
@@ -241,7 +342,7 @@ async function processInvoice(invoice, dealData) {
 
   const existing = await invoiceNotificationExists(invoiceId, status);
   if (existing) {
-    console.log(`[HANDLER] ℹ️ Уведомление для счёта ${invoiceId} уже существует (${existing.status})`);
+    console.log(`[HANDLER] ℹ️ Счёт ${invoiceId} статус ${status} уже в БД`);
     return;
   }
 
@@ -254,28 +355,23 @@ async function processInvoice(invoice, dealData) {
     amount,
     currency,
     notificationType,
-    dealTypeId: dealData.dealTypeId, // ← передаём
+    dealTypeId: dealData.dealTypeId,
   });
 
   console.log(`✅ [HANDLER] Счёт ${invoiceId} → "${notificationType}" в очереди`);
 }
 
-/**
- * Сбросить триггер счёта в сделке через API
- */
 async function resetInvoiceTrigger(dealId) {
   try {
-    console.log(`\n[B24] Сброс триггера счёта в сделке ${dealId}`);
-    const response = await axios.post(
+    console.log(`[B24] Сброс триггера сделки ${dealId}`);
+    await axios.post(
       `${BITRIX_WEBHOOK}/crm.deal.update`,
       {
         id: dealId,
-        fields: {
-          [DEAL_INVOICE_TRIGGER]: '0',
-        },
+        fields: { [DEAL_INVOICE_TRIGGER]: '0' },
       }
     );
-    console.log(`[B24] Триггер сброшен:`, JSON.stringify(response.data, null, 2));
+    console.log(`[B24] ✅ Триггер сброшен`);
   } catch (error) {
     console.error('[B24] Ошибка сброса триггера:', error.message);
   }
@@ -298,13 +394,9 @@ async function getDeal(dealId) {
   }
 }
 
-/**
- * Получить все счета по сделке
- */
 async function getInvoicesByDeal(dealId) {
   try {
-    console.log(`[B24] Запрос счетов для сделки ${dealId}`);
-
+    console.log(`[B24] Счета для сделки ${dealId}`);
     const response = await axios.post(
       `${BITRIX_WEBHOOK}/crm.item.list`,
       {
@@ -314,16 +406,10 @@ async function getInvoicesByDeal(dealId) {
         order: { createdTime: 'DESC' },
       }
     );
-
-    console.log(`[B24] Ответ счетов:`, JSON.stringify(response.data, null, 2));
-
-    const items = response.data?.result?.items || [];
-    console.log(`[B24] Найдено счетов: ${items.length}`);
-    return items;
-
+    console.log(`[B24] Счета:`, JSON.stringify(response.data, null, 2));
+    return response.data?.result?.items || [];
   } catch (error) {
-    console.error('[B24] Ошибка получения счетов:', error.message);
-    console.error('[B24] Response:', JSON.stringify(error.response?.data, null, 2));
+    console.error('[B24] Ошибка getInvoicesByDeal:', error.message);
     return [];
   }
 }
