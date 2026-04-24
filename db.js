@@ -419,4 +419,18 @@ export async function cancelPendingCycleNotifications(cycleId) {
   }
 }
 
+export async function setUserState(userId, state) {
+  try {
+    await pool.execute(
+      `INSERT INTO user_states (user_id, state)
+       VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE state = VALUES(state), updated_at = CURRENT_TIMESTAMP`,
+      [userId, state]
+    );
+    console.log(`[DB] user_states userId=${userId} → ${state}`);
+  } catch (error) {
+    console.error('[DB] Ошибка setUserState:', error.message);
+  }
+}
+
 export default pool;

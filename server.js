@@ -2,6 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import axios from 'axios';
 import { handleDealUpdate, validateToken } from './handlers/bitrix.js';
+import { setUserState } from './db.js';
 dotenv.config();
 
 const app = express();
@@ -64,24 +65,31 @@ app.post('/bot-command', async (req, res) => {
     return res.status(400).json({ error: 'userId и command обязательны' });
   }
 
-  const BOT_TOKEN = process.env.BOT_TOKEN;
-
   try {
-    // Отправляем сообщение пользователю от имени бота
-    // Это установит нужное состояние
     let text = '';
+    let state = '';
 
     if (command === 'lawyer') {
-      text = '__lawyer_request__';
+      text =
+        '👨‍⚖️ *Связь с юристом*\n\n' +
+        'Напишите ваш вопрос — юрист свяжется с вами в рабочее время (пн–пт, 9:00–18:00).';
+      state = 'waiting_lawyer_request';
     } else if (command === 'upload') {
-      text = '__upload_document__';
+      text =
+        '📎 *Загрузка документа*\n\n' +
+        'Отправьте файл — менеджер рассмотрит его и свяжется с вами.';
+      state = 'waiting_document';
     } else {
       return res.status(400).json({ error: 'Неизвестная команда' });
     }
 
+    // Сохраняем состояние в БД
+    await setUserState(userId, state);
+
+    // Отправляем сообщение пользователю
     const response = await axios.post(
       'https://platform-api.max.ru/messages',
-      { text },
+      { text, format: 'markdown' },
       {
         headers: {
           Authorization: BOT_TOKEN,
