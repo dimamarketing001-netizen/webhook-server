@@ -97,22 +97,6 @@ app.post('/bot-command', async (req, res) => {
       {
         text,
         format: 'markdown',
-        attachments: [
-          {
-            type: 'inline_keyboard',
-            payload: {
-              buttons: [
-                [
-                  {
-                    type: 'callback',
-                    text: '❌ Отмена',
-                    payload: 'cancel'
-                  }
-                ]
-              ]
-            }
-          }
-        ]
       },
       {
         headers: {
