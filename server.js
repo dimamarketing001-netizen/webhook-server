@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import axios from 'axios';
 import { handleDealUpdate, validateToken } from './handlers/bitrix.js';
 import { setUserState } from './db.js';
+import bot from '../bot/bot.js';
 dotenv.config();
 
 const app = express();
@@ -57,8 +58,13 @@ app.post('/webhook/bitrix', async (req, res) => {
 });
 
 app.post('/webhook/max', async (req, res) => {
-  console.log('🔥 MAX EVENT ON SERVER:', JSON.stringify(req.body, null, 2));
-  res.json({ ok: true });
+  try {
+    await bot.handleUpdate(req.body);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('MAX webhook error:', err);
+    res.status(500).json({ error: 'Webhook failed' });
+  }
 });
 
 app.post('/bot-command', async (req, res) => {
