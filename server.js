@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 import axios from 'axios';
 import { handleDealUpdate, validateToken } from './handlers/bitrix.js';
 import { setUserState } from './db.js';
-import bot from '../bot/bot.js';
+import bot from '../MaxApp/bot/bot.js';
 dotenv.config();
 
 const app = express();
