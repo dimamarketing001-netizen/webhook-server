@@ -56,6 +56,11 @@ app.post('/webhook/bitrix', async (req, res) => {
   }
 });
 
+app.post('/webhook/max', async (req, res) => {
+  console.log('🔥 MAX EVENT ON SERVER:', JSON.stringify(req.body, null, 2));
+  res.json({ ok: true });
+});
+
 app.post('/bot-command', async (req, res) => {
   const { userId, command } = req.body;
 
